@@ -7,18 +7,12 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"strings"
 	"net"
 	"strconv"
 	"encoding/gob"
 	"io"
-	"bufio"
-	
+	"net/url"
 )
-
-type configuration struct{
-	endpoint string
-}
 
 func serializeArgs(wd io.Writer, m []string)  {
 	e := gob.NewEncoder(wd)
@@ -37,83 +31,114 @@ func deserializeArgs(rd io.Reader) []string {
 
 func main() {
 	args := os.Args[1:]
-	
-	if len(args) == 1 {
-		//json
-
-	}
 	if len(args) < 2 {
 		log.Fatal("!!!")
 		return
 	}
         
-	url := args[0]
 	rest := args[1:]
-
-	make_handler := func(rest []string) func(http.ResponseWriter, *http.Request) {
-		
-			handler := func(w http.ResponseWriter, req *http.Request) {
-				fmt.Printf("Request starts")
-				var cmd = exec.Command(rest[0], rest[1:]...)
-				var env = os.Environ()
-				log.Print(env)
-				
-				stdout, err := cmd.StdoutPipe()
-			
-				if err != nil {
-					log.Fatal(err)
-				}
-				stderr, err2 := cmd.StderrPipe()
-				if err2 != nil {
-					log.Fatal(err2)
-				}
-
-				cstd := make(chan []byte, 1)
-				cerr := make(chan []byte, 1)
-				
-				go func() {
-					d, _ := ioutil.ReadAll(stdout)
-				cstd <- d
-			}()
-			
-			go func() {
-				d, _ := ioutil.ReadAll(stderr)
-				cerr <- d
-			}()
-			var e = cmd.Start()
-			if e != nil {
-				fmt.Fprintf(w, "{}", e)
-			} else {
-				w.Write(<-cstd)
-				w.Write(<-cerr)
-				cmd.Wait()
-			}
-
-			fmt.Printf("Request complete")
+	ep := make(map[string] []string)
+	
+	handler :=  func(w http.ResponseWriter, req *http.Request) {
+		args, ok := ep[req.URL.Path]
+		if ok == false || len(args) == 0 {
+			w.WriteHeader(http.StatusBadRequest);
+			return;
 		}
-		return handler;
+		
+		log.Printf("Request starts %s :%v\n", req.URL.Path, args)
+		var cmd = exec.Command(args[0], args[1:]...)
+		q := req.URL.Query()
+		
+		tlen := 0
+		for _, v := range q {
+			tlen = tlen + len(v);
+		}
+		env2 := make([]string, tlen)
+		j := 0;
+		for k, v := range q {
+			for i := 0; i < len(v); i++{
+				env2[j] = fmt.Sprintf("%s=%s", k, v[i]);
+				j += 1;
+			}
+		}
+
+		cmd.Env = append(cmd.Env, env2...);
+		log.Printf("Env: %v\n", cmd.Env);
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			log.Printf("{}", err)
+			return;
+		}
+		stderr, err := cmd.StderrPipe()
+		if err != nil {
+			log.Printf("{}", err)
+			return;
+		}
+		stdin, err := cmd.StdinPipe()
+		if err != nil {
+			log.Printf("{}", err)
+			return;
+		}
+		go func (){
+			io.Copy(stdin, req.Body);
+			stdin.Close()
+		}();
+		go io.Copy(w, stdout)
+		go ioutil.ReadAll(stderr)
+		
+		var e = cmd.Start()
+		if e == nil {
+			log.Printf("cmd.Start()\n");
+			e = cmd.Wait()
+			log.Printf("cmd.Wait()\n");
+		}
+		
+		if e != nil {
+			fmt.Fprintf(w, "{}", e)
+			w.WriteHeader(http.StatusBadRequest);
+			log.Printf("Request complete  error: {}", e)
+		}else{
+		
+			log.Printf("Request complete successfully.")
+		}
 	}
+	
 	var port uint;
 	newConnection := func(w http.ResponseWriter, req *http.Request) {
-		log.Printf("Emit port!\n");
 		fmt.Fprintf(w, "%v", port);
 	}
-	log.Printf("Listing for requests at {}\n", url)
-	base := strings.Split(url, "/")[0]
-	handleConnection := func(conn net.Conn){
-		log.Printf("Handling Connection!\n");
-		var args = deserializeArgs(conn);
-		go http.HandleFunc(args[0], make_handler(args[1:]))
-		buf := make([]byte, 1);
-		conn.Read(buf);
-		
-		log.Printf("Closing con {}\n", args);
-		conn.Close();
+	log.Printf("Listing for requests at {}\n", args[0])
+	u, err := url.Parse(args[0])
+	if err != nil {
+		log.Fatal(err);
+		return;
 	}
 	
 	
-	endpoint := url[len(base):]
-	http.HandleFunc(endpoint, make_handler(rest))
+	handleConnection := func(conn net.Conn){
+		var args = deserializeArgs(conn);
+		defer conn.Close();
+		u, e := url.Parse(args[0]);
+		if e != nil {
+			log.Fatal(e);
+			return;
+		}
+		_, ok := ep[u.Path];
+		ep[u.Path] = args[1:];
+		if ok == false {
+			// start a new handler as the endpoint has not previosly been seen
+			go http.HandleFunc(u.Path, handler)
+		}
+		buf := make([]byte, 1);
+		conn.Read(buf);
+		ep[u.Path] = make([]string, 0);
+		log.Printf("Closing con {}\n", args);
+	}
+	
+	ep[u.Path] = rest;
+	http.HandleFunc(u.Path, handler)
+	log.Printf("Path: %s\n", u.Path);
 	http.HandleFunc("/servy-conf", newConnection);
 
 	go func(){
@@ -133,28 +158,36 @@ func main() {
 			go handleConnection(conn)
 		}
 	}()
-	
-	err := http.ListenAndServe(base, nil)
+	if u.Scheme == "https" {
+		certPem := os.Getenv("SERVY_CERT_FILE");
+		keyPem := os.Getenv("SERVY_KEY_FILE");
+		log.Printf("SSL: %s %s\n", certPem, keyPem);
+		err = http.ListenAndServeTLS(u.Host, certPem, keyPem, nil)
+	}else{
+		err = http.ListenAndServe(u.Host, nil)
+	}
+	log.Printf("Host: %s\n", u.Scheme);
+	log.Printf("Error: {}\n", err);
 	if(err != nil){
 		// this means that we could not create a server.
 		// a new servy can be started by connecting to the localhost mux1.
-		resp, err2 := http.Get(fmt.Sprintf("http://%s/servy-conf", base));
+		resp, err2 := http.Get(fmt.Sprintf("%s://%s/servy-conf", u.Scheme, u.Host));
 		if(err2 == nil){
+			
 			defer resp.Body.Close()
-			body, err3 := ioutil.ReadAll(resp.Body)
+			body, _ := ioutil.ReadAll(resp.Body)
 			port2, _ := strconv.ParseUint(string(body), 10, 32)
 			port = uint(port2)
-			log.Printf(">>> %v {}\n", port, err3);
 		}else{
 			log.Fatal(err2);
 			return;
 		}
 
-		conn,err3 := net.Dial("tcp", fmt.Sprintf("localhost:%v", port));
-		serializeArgs(conn, append([]string{endpoint}, rest...));
-		log.Printf("{} {}\n", conn, err3);
+		conn,_ := net.Dial("tcp", fmt.Sprintf("localhost:%v", port));
 		defer conn.Close();
-		bufio.NewReader(os.Stdin).ReadBytes('\n')
 		
+		serializeArgs(conn, args);
+		buf := make([]byte, 1);
+		conn.Read(buf);
 	}
 }
