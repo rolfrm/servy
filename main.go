@@ -12,6 +12,10 @@ import (
 	"encoding/gob"
 	"io"
 	"net/url"
+	"runtime/pprof"
+	//"runtime"
+	"os/signal"
+	"syscall"
 )
 
 func serializeArgs(wd io.Writer, m []string)  {
@@ -29,10 +33,29 @@ func deserializeArgs(rd io.Reader) []string {
 	return m
 }
 
+func SetupCloseHandler(srv *http.Server) {
+	c := make(chan os.Signal)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-c
+		srv.Close();
+		//os.Exit(0)
+	}()
+}
+
 func main() {
+
+	if(false){
+		f, _ := os.Create("./prof")
+		pprof.StartCPUProfile(f)
+		defer pprof.StopCPUProfile()
+	}
+	
+	//log.SetFlags(0)
+	//log.SetOutput(ioutil.Discard)
 	args := os.Args[1:]
 	if len(args) < 2 {
-		log.Fatal("!!!")
+		//log.Fatal("!!!")
 		return
 	}
         
@@ -46,7 +69,7 @@ func main() {
 			return;
 		}
 		
-		log.Printf("Request starts %s :%v\n", req.URL.Path, args)
+		log.Printf("Request %s :%v\n", req.URL.Path, args)
 		var cmd = exec.Command(args[0], args[1:]...)
 		q := req.URL.Query()
 		
@@ -64,36 +87,39 @@ func main() {
 		}
 
 		cmd.Env = append(cmd.Env, env2...);
-		log.Printf("Env: %v\n", cmd.Env);
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
 			log.Printf("{}", err)
 			return;
 		}
-		stderr, err := cmd.StderrPipe()
-		if err != nil {
-			log.Printf("{}", err)
-			return;
+
+		{
+			stderr, err := cmd.StderrPipe()
+			if err != nil {
+				log.Printf("{}", err)
+				return;
+			}
+			go func (){
+				ioutil.ReadAll(stderr)
+				stderr.Close();
+			}();
 		}
-		stdin, err := cmd.StdinPipe()
-		if err != nil {
-			log.Printf("{}", err)
-			return;
+		
+		if req.Method != http.MethodGet {
+			stdin, err := cmd.StdinPipe()
+			if err != nil {
+				log.Printf("{}", err)
+				return;
+			}
+			go func (){
+				io.Copy(stdin, req.Body);
+				stdin.Close()
+			}();
 		}
-		go func (){
-			io.Copy(stdin, req.Body);
-			stdin.Close()
-		}();
-		go io.Copy(w, stdout)
-		go ioutil.ReadAll(stderr)
 		
 		var e = cmd.Start()
-		if e == nil {
-			log.Printf("cmd.Start()\n");
-			e = cmd.Wait()
-			log.Printf("cmd.Wait()\n");
-		}
-		
+		io.Copy(w, stdout)
+		cmd.Wait();
 		if e != nil {
 			fmt.Fprintf(w, "{}", e)
 			w.WriteHeader(http.StatusBadRequest);
@@ -114,7 +140,8 @@ func main() {
 		log.Fatal(err);
 		return;
 	}
-	
+	srv := &http.Server{Addr: u.Host}
+	SetupCloseHandler(srv)
 	
 	handleConnection := func(conn net.Conn){
 		var args = deserializeArgs(conn);
@@ -135,6 +162,8 @@ func main() {
 		ep[u.Path] = make([]string, 0);
 		log.Printf("Closing con {}\n", args);
 	}
+
+
 	
 	ep[u.Path] = rest;
 	http.HandleFunc(u.Path, handler)
@@ -158,19 +187,28 @@ func main() {
 			go handleConnection(conn)
 		}
 	}()
+
 	if u.Scheme == "https" {
 		certPem := os.Getenv("SERVY_CERT_FILE");
 		keyPem := os.Getenv("SERVY_KEY_FILE");
 		log.Printf("SSL: %s %s\n", certPem, keyPem);
-		err = http.ListenAndServeTLS(u.Host, certPem, keyPem, nil)
+		err = srv.ListenAndServeTLS(certPem, keyPem)
 	}else{
-		err = http.ListenAndServe(u.Host, nil)
+		err = srv.ListenAndServe()
+
 	}
-	log.Printf("Host: %s\n", u.Scheme);
+	
+	log.Printf("Host: '%s' %s\n", u.Host, u.Scheme);
 	log.Printf("Error: {}\n", err);
 	if(err != nil){
+		log.Printf("Error: '%v'\n", err.Error());
+		if(err.Error() == "http: Server closed"){
+			return;
+		}
+		//if(err.Error() == 
 		// this means that we could not create a server.
 		// a new servy can be started by connecting to the localhost mux1.
+		
 		resp, err2 := http.Get(fmt.Sprintf("%s://%s/servy-conf", u.Scheme, u.Host));
 		if(err2 == nil){
 			
