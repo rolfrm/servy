@@ -44,7 +44,7 @@ B=`curl -X GET http://localhost:54545/echo1`
 #curl -X GET http://localhost:54545/zero -o /dev/null&
 #Z2 = $!
 #curl -X GET http://localhost:54545/zero -o /dev/null
-D=`curl -X GET http://localhost:54545/zero --data-binary -v | curl -X POST -T /dev/stdin http://localhost:54545/sha1sum -v| cut -d " " -f 1`
+D=`curl -X GET http://localhost:54545/zero --data-binary -v | 1sum -v| cut -d " " -f 1`
 
 #curl -X POST http://localhost:54545/sha1sum
 
