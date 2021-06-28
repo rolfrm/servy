@@ -247,7 +247,7 @@ func main() {
 	//log.SetOutput(ioutil.Discard)
 	args := os.Args[1:]
 	if len(args) < 2 {
-		//log.Fatal("!!!")
+		log.Fatal("At least two arguments must be supplied. [endpoint] and command.")
 		return
 	}
         u, err := url.Parse(args[0])
