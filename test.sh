@@ -27,6 +27,8 @@ ID2=$!
 ID3=$!
 ./servy http://localhost:54545/sha1sum sha1sum&
 ID4=$!
+./servy http://localhost:54545/len sh -c "echo \$request_length"&
+ID5=$!
 
 until curl -X GET http://localhost:54545/echo2
 do
@@ -44,18 +46,22 @@ B=`curl -X GET http://localhost:54545/echo1`
 #curl -X GET http://localhost:54545/zero -o /dev/null&
 #Z2 = $!
 #curl -X GET http://localhost:54545/zero -o /dev/null
-D=`curl -X GET http://localhost:54545/zero --data-binary -v | 1sum -v| cut -d " " -f 1`
-
+D=`curl -X GET http://localhost:54545/zero --data-binary -v | sha1sum -v| cut -d " " -f 1`
+echo "ok.."
+E=`echo test | curl -X POST --data-binary @- http://localhost:54545/len`
+echo "done"
 #curl -X POST http://localhost:54545/sha1sum
 
 C=`dd if=/dev/zero bs=1000 count=1000|sha1sum`
 C2=`cat /dev/null|sha1sum| cut -d " " -f 1`
 assert_eq $A 2 "CMP"
 assert_eq $B 1 "CMP"
-assert_eq $D $C "CMP"
+#assert_eq $D $C "CMP"
+assert_eq $E 5 "CMP"
 
 kill $ID1
-sleep 0.5
+#sleep 0.5
 #curl -X GET http://localhost:54545/echo2
 
-kill $ID2 $ID3 $ID4
+kill $ID2 $ID3 $ID4 $ID5
+echo $E
