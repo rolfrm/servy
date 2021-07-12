@@ -21,8 +21,7 @@ jobs:
     - name: Build
       run: |
          cd ..
-         pwd
-         go mod download
+         go mod download golang.org/x/net
          go build -v 
 
     - name: Test
