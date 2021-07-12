@@ -1,0 +1,45 @@
+<html>
+
+  <body>
+    <h1>Hello WebSockets</h1>
+    <div id="content">
+      Check the console log!
+    </div>
+    <script>
+      var exampleSocket = new WebSocket("ws://localhost:8889/echo1", "protocolOne");
+      exampleSocket.onopen = (() => exampleSocket.send("test websocket"));
+      exampleSocket.onmessage = ((msg) =>
+				 {
+				     console.log(msg.data);
+				     if(msg.data.length > 0){
+					 // re send
+					 exampleSocket.send(msg.data.substring(1, msg.data.length));
+				     }
+				 });
+      var exampleSocket2 = new WebSocket("ws://localhost:8889/flen", "protocolOne");
+      exampleSocket2.onopen = (() => {
+	  exampleSocket2.send("\0\0\0\0\0\0\0\0");
+	  exampleSocket2.send("\1\0\0\0\0\0\0\0");
+	  exampleSocket2.send("\0\1\0\0\0\0\0\0");
+	  exampleSocket2.send("\0\0\1\0\0\0\0\0");
+      });
+      exampleSocket2.onmessage = ((msg) => console.log(msg.data));
+
+      exampleSocket3 = new WebSocket("ws://localhost:8889/sha1", "protocolOne");
+      exampleSocket3.onopen = (() => {
+	  // sha1 expects the first 8 bytes to be the length and the
+	  // next N bytes to be the content.
+	  // here are 4 messages of length 2.
+	  exampleSocket3.send("\2\0\0\0\0\0\0\0aa");
+	  exampleSocket3.send("\2\0\0\0\0\0\0\0bb");
+	  exampleSocket3.send("\2\0\0\0\0\0\0\0aa");
+	  exampleSocket3.send("\2\0\0\0\0\0\0\0");
+	  exampleSocket3.send("bb");
+	  
+      });
+      exampleSocket3.onmessage = ((msg) => console.log(msg.data));
+
+    </script>
+  </body>
+
+</html>
