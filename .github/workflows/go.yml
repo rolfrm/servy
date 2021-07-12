@@ -21,6 +21,7 @@ jobs:
     - name: Build
       run: |
          cd ..
+         pwd
          go mod download
          go build -v 
 
