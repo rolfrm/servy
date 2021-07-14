@@ -20,6 +20,7 @@ jobs:
 
     - name: Build
       run: |
+      	 pwd
          go get
          go build -v 
 
