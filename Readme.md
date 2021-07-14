@@ -26,6 +26,12 @@ curl -X POST -T ./main.go http://localhost:8888/sha1
 # this web socket echoes out whatever is sent to it.
 ./servy ws://localhost:8888/echo-ws cat /dev/stdin
 
+# endpoints can be started in parallel using a shell script:
+./servy http://localhost:8888/sha1 sha1sum &
+./servy ws://localhost:8888/echo-ws cat /dev/stdin
+
+# Additional script information can be added using SERVY_ARGS
+export SERVY_ARGS=A=1;B=2
 ```
 
 See the web page example for more information.
