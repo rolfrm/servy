@@ -23,7 +23,7 @@ jobs:
          pwd
          go get
          go build -v
-	 echo "done"
+          echo "done"
 
     - name: Test
       run: |
