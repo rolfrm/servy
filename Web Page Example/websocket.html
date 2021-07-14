@@ -6,7 +6,11 @@
       Check the console log!
     </div>
     <script>
-      var exampleSocket = new WebSocket("ws://localhost:8889/echo1", "protocolOne");
+      function to_ws(s) {
+	  var l = window.location;
+	  return ((l.protocol === "https:") ? "wss://" : "ws://") + l.host + s;
+      }
+      var exampleSocket = new WebSocket(to_ws("/echo1?wow=1"), "protocolOne");
       exampleSocket.onopen = (() => exampleSocket.send("test websocket"));
       exampleSocket.onmessage = ((msg) =>
 				 {
@@ -16,7 +20,7 @@
 					 exampleSocket.send(msg.data.substring(1, msg.data.length));
 				     }
 				 });
-      var exampleSocket2 = new WebSocket("ws://localhost:8889/flen", "protocolOne");
+      var exampleSocket2 = new WebSocket(to_ws("/flen"), "protocolOne");
       exampleSocket2.onopen = (() => {
 	  exampleSocket2.send("\0\0\0\0\0\0\0\0");
 	  exampleSocket2.send("\1\0\0\0\0\0\0\0");
@@ -25,7 +29,7 @@
       });
       exampleSocket2.onmessage = ((msg) => console.log(msg.data));
 
-      exampleSocket3 = new WebSocket("ws://localhost:8889/sha1", "protocolOne");
+      exampleSocket3 = new WebSocket(to_ws("/sha1"), "protocolOne");
       exampleSocket3.onopen = (() => {
 	  // sha1 expects the first 8 bytes to be the length and the
 	  // next N bytes to be the content.
