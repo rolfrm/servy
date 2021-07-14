@@ -22,7 +22,13 @@ The simplest way to create a web server. Transform executables into web endpoint
 #now from a different console do
 curl -X POST -T ./main.go http://localhost:8888/sha1
 
+#Web sockets are also supported:
+# this web socket echoes out whatever is sent to it.
+./servy ws://localhost:8888/echo-ws cat /dev/stdin
+
 ```
+
+See the web page example for more information.
 ## Build
 
 ```sh
