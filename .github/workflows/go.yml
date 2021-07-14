@@ -22,10 +22,10 @@ jobs:
       run: |
          pwd
          go get
-         go build -v 
+         go build -v
+	 echo "done"
 
     - name: Test
       run: |
-         cd ..
          ./test.sh
          
