@@ -4,6 +4,7 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
+	"golang.org/x/net/websocket"
 	"io"
 	"io/ioutil"
 	"log"
@@ -13,12 +14,10 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"runtime/pprof"
 	"strconv"
 	"strings"
-	"syscall"
 	"sync"
-	"golang.org/x/net/websocket"
+	"syscall"
 )
 
 func serializeArgs(wd io.Writer, m []string) {
@@ -45,21 +44,21 @@ func SetupCloseHandler(srv *http.Server) {
 	go func() {
 		<-c
 		srv.Close()
-		os.Exit(0) // disable this to do profiling
+		os.Exit(0)
 	}()
 }
 
-func handle_ws_request(conn *websocket.Conn, ep map[string][]string){
-	// this is extremely similar to handle_request
-	url := conn.Config().Location;
-	args, ok := ep[url.Path]
-	if !ok {
-		log.Printf("Failed websocket %s\n", url.Path)
-		conn.Close();
-		return;
+func generic_handle_request(url *url.URL, ep map[string][]string, reader io.Reader, writer io.Writer, extraArgs []string) error {
+	if writer == nil {
+		writer = io.Discard
 	}
 
-	log.Printf("Websocket Opened %s :%v\n", url.Path, args)
+	args, ok := ep[url.Path]
+	if !ok {
+		return fmt.Errorf("Failed call %s\n", url.String())
+	}
+
+	log.Printf("Opened %s :%v\n", url.String(), args)
 	var cmd = exec.Command(args[0], args[1:]...)
 	q := url.Query()
 
@@ -76,136 +75,90 @@ func handle_ws_request(conn *websocket.Conn, ep map[string][]string){
 		}
 	}
 	servy_args := os.Getenv("SERVY_ARGS")
-	env3 := strings.Split(servy_args,";")
-	cmd.Env = append(append(cmd.Env, env3...), env2...)
-	
+	env3 := strings.Split(servy_args, ";")
+	cmd.Env = append(append(append(cmd.Env, env3...), env2...), extraArgs...)
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		log.Printf("{}", err)
-		return
-	}
-	
-	{
-		stderr, err := cmd.StderrPipe()
-		if err != nil {
-			log.Printf("{}", err)
-			return
-		}
-		go func() {
-			ioutil.ReadAll(stderr)
-			stderr.Close()
-		}()
-	}
-
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		log.Printf("{}", err)
-		return
-	}
-	go func() {
-		io.Copy(stdin, conn)
-		stdin.Close()
-	}()
-
-
-	var e = cmd.Start()
-	io.Copy(conn, stdout)
-	cmd.Wait()
-	if e != nil {
-		log.Printf("Request complete  error: {}", e)
-	} else {
-
-		log.Printf("Websocket closing.")
-	}
-	
-	conn.Close()
-}
-
-func handle_request(w http.ResponseWriter, req *http.Request, ep map[string][]string) {
-	url := req.URL;
-	args, ok := ep[url.Path]
-	if ok == false || len(args) == 0 {
-		log.Printf("Failed request %s\n", url.Path)
-		fmt.Fprintf(w, "Endpoint not found.")
-		
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-
-	log.Printf("Request %s :%v\n", url.Path, args)
-	var cmd = exec.Command(args[0], args[1:]...)
-	q := url.Query()
-
-	tlen := 0
-	for _, v := range q {
-		tlen = tlen + len(v)
-	}
-	env2 := make([]string, tlen + 1)
-	j := 0
-	for k, v := range q {
-		for i := 0; i < len(v); i++ {
-			env2[j] = fmt.Sprintf("%s=%s", k, v[i])
-			j += 1
-		}
-	}
-	env2[j] = fmt.Sprintf("request_length=%v",req.ContentLength)
-	servy_args := os.Getenv("SERVY_ARGS")
-	env3 := strings.Split(servy_args,";")
-	cmd.Env = append(append(cmd.Env, env3...), env2...)
-	
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		log.Printf("{}", err)
-		return
+		log.Printf("{}\n", err)
 	}
 
 	{
 		stderr, err := cmd.StderrPipe()
 		if err != nil {
 			log.Printf("{}", err)
-			return
 		}
 		go func() {
-			ioutil.ReadAll(stderr)
+			all, eeeer := ioutil.ReadAll(stderr)
+			if eeeer != nil {
+				log.Printf("{}\n", eeeer)
+			}
+			if all != nil {
+				log.Printf("Stderr: %s", all)
+			}
 			stderr.Close()
 		}()
 	}
 
-	if req.Method != http.MethodGet {
+	if reader != nil {
 		stdin, err := cmd.StdinPipe()
 		if err != nil {
-			log.Printf("{}", err)
-			return
+			log.Printf("Unable to open stdin: %s\n", err.Error())
 		}
 		go func() {
-			io.Copy(stdin, req.Body)
+			io.Copy(stdin, reader)
 			stdin.Close()
 		}()
 	}
 
 	var e = cmd.Start()
-	io.Copy(w, stdout)
+
+	io.Copy(writer, stdout)
 	cmd.Wait()
 	if e != nil {
-		fmt.Fprintf(w, "{}", e)
-		w.WriteHeader(http.StatusBadRequest)
 		log.Printf("Request complete  error: {}", e)
 	} else {
 
-		log.Printf("Request complete successfully.")
+		log.Printf("closing.")
+	}
+	return nil
+}
+
+func handle_ws_request(conn *websocket.Conn, ep map[string][]string) {
+	url := conn.Config().Location
+	defer conn.Close()
+	generic_handle_request(url, ep, conn, conn, make([]string, 0))
+}
+
+func handle_http_request(w http.ResponseWriter, req *http.Request, ep map[string][]string) {
+	url := req.URL
+	stdinData := req.Body
+	stdOutData := w
+	if req.Method == http.MethodGet {
+		stdinData = nil
+	}
+	if req.Method == http.MethodPut {
+		stdOutData = nil
+	}
+
+	err := generic_handle_request(url, ep, stdinData, stdOutData, []string{fmt.Sprintf("request_length=%v", req.ContentLength)})
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
 	}
 }
 
 func make_request_handler(url *url.URL, endpoints map[string][]string) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, req *http.Request) {
-		handle_request(w, req, endpoints)
+		handle_http_request(w, req, endpoints)
 	}
 }
 
 func startEndPoint(url *url.URL, endpoints map[string][]string) {
-	if (url.Scheme == "wss" || url.Scheme == "ws") {
-		handler := websocket.Handler(func (conn *websocket.Conn) {
-			handle_ws_request(conn, endpoints)})
+	if url.Scheme == "wss" || url.Scheme == "ws" {
+		handler := websocket.Handler(func(conn *websocket.Conn) {
+			handle_ws_request(conn, endpoints)
+		})
 		http.Handle(url.Path, handler)
 	} else {
 		http.HandleFunc(url.Path, make_request_handler(url, endpoints))
@@ -221,7 +174,6 @@ func startListenAndServe(srv *http.Server, u *url.URL) error {
 	} else {
 		return srv.ListenAndServe()
 	}
-
 }
 
 func attachToServer(u *url.URL, args []string) error {
@@ -231,14 +183,13 @@ func attachToServer(u *url.URL, args []string) error {
 	// a new servy can be started by connecting to the localhost mux1.
 
 	scheme := u.Scheme
-	if(scheme == "wss") {
-		scheme = "https";
+	if scheme == "wss" {
+		scheme = "https"
 	}
-	if(scheme == "ws") {
-		scheme = "http";
+	if scheme == "ws" {
+		scheme = "http"
 	}
 
-	
 	resp, err2 := http.Get(fmt.Sprintf("%s://%s/servy-conf", scheme, u.Host))
 	var port uint
 	if err2 == nil {
@@ -263,9 +214,6 @@ func attachToServer(u *url.URL, args []string) error {
 	return err3
 }
 
-
-
-
 func main_server(args []string, u *url.URL) error {
 	rest := args[1:]
 
@@ -284,7 +232,7 @@ func main_server(args []string, u *url.URL) error {
 	handleConnection := func(conn net.Conn) {
 		var args = deserializeArgs(conn)
 		defer conn.Close()
-		
+
 		u, e := url.Parse(args[0])
 		if e != nil {
 			log.Fatal(e)
@@ -296,7 +244,6 @@ func main_server(args []string, u *url.URL) error {
 		mu.Unlock()
 		if ok == false {
 			// start a new handler as the endpoint has not previosly been seen
-			
 			go startEndPoint(u, ep)
 		}
 		buf := make([]byte, 1)
@@ -346,14 +293,6 @@ func main_server(args []string, u *url.URL) error {
 
 func main() {
 
-	if false {
-		f, _ := os.Create("./prof")
-		pprof.StartCPUProfile(f)
-		defer pprof.StopCPUProfile()
-	}
-
-	//log.SetFlags(0)
-	//log.SetOutput(ioutil.Discard)
 	args := os.Args[1:]
 	if len(args) < 2 {
 		log.Fatal("At least two arguments must be supplied. [endpoint] and command.")
