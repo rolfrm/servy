@@ -20,7 +20,23 @@ import (
 	"syscall"
 )
 
-func serializeArgs(wd io.Writer, m []string) {
+type Args struct {
+	Path string
+	Arguments []string
+	Environment []string
+	Mime string
+}
+
+func newArgs(args []string) Args{
+	var a Args
+	a.Arguments = args[1:];
+	a.Environment = strings.Split(os.Getenv("SERVY_ARGS"), ";")
+	a.Mime = os.Getenv("SERVY_MIME");
+	a.Path = args[0]
+	return a;
+}
+
+func serializeArgs(wd io.Writer, m Args) {
 	e := gob.NewEncoder(wd)
 	err := e.Encode(m)
 	if err != nil {
@@ -28,8 +44,8 @@ func serializeArgs(wd io.Writer, m []string) {
 	}
 }
 
-func deserializeArgs(rd io.Reader) []string {
-	var m []string
+func deserializeArgs(rd io.Reader) Args {
+	var m Args
 	d := gob.NewDecoder(rd)
 	err := d.Decode(&m)
 	if err != nil {
@@ -48,17 +64,17 @@ func SetupCloseHandler(srv *http.Server) {
 	}()
 }
 
-func generic_handle_request(url *url.URL, ep map[string][]string, reader io.Reader, writer io.Writer, extraArgs []string) error {
+func generic_handle_request(url *url.URL, ep map[string]Args, reader io.Reader, writer io.Writer, extraArgs []string) error {
 	if writer == nil {
 		writer = io.Discard
 	}
 
-	args, ok := ep[url.Path]
+	args2, ok := ep[url.Path]
 	if !ok {
 		return fmt.Errorf("Failed call %s\n", url.String())
 	}
-
-	log.Printf("Opened %s :%v\n", url.String(), args)
+	args := args2.Arguments
+	log.Printf("Opened %s :%+v\n", url.String(), args2)
 	var cmd = exec.Command(args[0], args[1:]...)
 	q := url.Query()
 
@@ -74,10 +90,8 @@ func generic_handle_request(url *url.URL, ep map[string][]string, reader io.Read
 			j += 1
 		}
 	}
-	servy_args := os.Getenv("SERVY_ARGS")
-	env3 := strings.Split(servy_args, ";")
-	cmd.Env = append(append(append(cmd.Env, env3...), env2...), extraArgs...)
-
+	cmd.Env = append(append(append(cmd.Env, args2.Environment...), env2...), extraArgs...)
+	
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		log.Printf("{}\n", err)
@@ -93,7 +107,7 @@ func generic_handle_request(url *url.URL, ep map[string][]string, reader io.Read
 			if eeeer != nil {
 				log.Printf("{}\n", eeeer)
 			}
-			if all != nil {
+			if all != nil && len(all) > 0 {
 				log.Printf("Stderr: %s", all)
 			}
 			stderr.Close()
@@ -124,13 +138,13 @@ func generic_handle_request(url *url.URL, ep map[string][]string, reader io.Read
 	return nil
 }
 
-func handle_ws_request(conn *websocket.Conn, ep map[string][]string) {
+func handle_ws_request(conn *websocket.Conn, ep map[string]Args) {
 	url := conn.Config().Location
-	defer conn.Close()
 	generic_handle_request(url, ep, conn, conn, make([]string, 0))
+	conn.Close()
 }
 
-func handle_http_request(w http.ResponseWriter, req *http.Request, ep map[string][]string) {
+func handle_http_request(w http.ResponseWriter, req *http.Request, ep map[string]Args) {
 	url := req.URL
 	stdinData := req.Body
 	stdOutData := w
@@ -140,7 +154,10 @@ func handle_http_request(w http.ResponseWriter, req *http.Request, ep map[string
 	if req.Method == http.MethodPut {
 		stdOutData = nil
 	}
-
+	args2, ok := ep[url.Path]
+	if ok && args2.Mime != "" {
+		w.Header().Add("Content-Type", args2.Mime)
+	}
 	err := generic_handle_request(url, ep, stdinData, stdOutData, []string{fmt.Sprintf("request_length=%v", req.ContentLength)})
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -148,13 +165,13 @@ func handle_http_request(w http.ResponseWriter, req *http.Request, ep map[string
 	}
 }
 
-func make_request_handler(url *url.URL, endpoints map[string][]string) func(http.ResponseWriter, *http.Request) {
+func make_request_handler(url *url.URL, endpoints map[string] Args) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, req *http.Request) {
 		handle_http_request(w, req, endpoints)
 	}
 }
 
-func startEndPoint(url *url.URL, endpoints map[string][]string) {
+func startEndPoint(url *url.URL, endpoints map[string]Args) {
 	if url.Scheme == "wss" || url.Scheme == "ws" {
 		handler := websocket.Handler(func(conn *websocket.Conn) {
 			handle_ws_request(conn, endpoints)
@@ -176,7 +193,7 @@ func startListenAndServe(srv *http.Server, u *url.URL) error {
 	}
 }
 
-func attachToServer(u *url.URL, args []string) error {
+func attachToServer(u *url.URL, args Args) error {
 	log.Printf("Host: '%s' %s\n", u.Host, u.Scheme)
 
 	// this means that we could not create a server.
@@ -215,9 +232,8 @@ func attachToServer(u *url.URL, args []string) error {
 }
 
 func main_server(args []string, u *url.URL) error {
-	rest := args[1:]
 
-	ep := make(map[string][]string)
+	ep := make(map[string]Args)
 
 	var port uint
 	newConnection := func(w http.ResponseWriter, req *http.Request) {
@@ -230,17 +246,18 @@ func main_server(args []string, u *url.URL) error {
 	SetupCloseHandler(srv)
 	var mu sync.Mutex
 	handleConnection := func(conn net.Conn) {
-		var args = deserializeArgs(conn)
+		args := deserializeArgs(conn)
+		
 		defer conn.Close()
 
-		u, e := url.Parse(args[0])
+		u, e := url.Parse(args.Path)
 		if e != nil {
 			log.Fatal(e)
 			return
 		}
 		_, ok := ep[u.Path]
 		mu.Lock()
-		ep[u.Path] = args[1:]
+		ep[u.Path] = args
 		mu.Unlock()
 		if ok == false {
 			// start a new handler as the endpoint has not previosly been seen
@@ -248,11 +265,11 @@ func main_server(args []string, u *url.URL) error {
 		}
 		buf := make([]byte, 1)
 		conn.Read(buf)
-		ep[u.Path] = make([]string, 0)
+		ep[u.Path] = Args{}
 		log.Printf("Closing con {}\n", args)
 	}
 
-	ep[u.Path] = rest
+	ep[u.Path] = newArgs(args)
 	startEndPoint(u, ep)
 	log.Printf("Path: %s\n", u.Path)
 	http.HandleFunc("/servy-conf", newConnection)
@@ -281,7 +298,7 @@ func main_server(args []string, u *url.URL) error {
 			log.Printf("startListenAndServe Error: %v\n", err.Error())
 			return err
 		}
-		err2 := attachToServer(u, args)
+		err2 := attachToServer(u, newArgs(args))
 		if strings.Contains(err2.Error(), "Server Connection Lost") == false {
 			log.Printf("attach To Process Error: %v\n", err2.Error())
 			return err2
