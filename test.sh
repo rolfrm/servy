@@ -17,20 +17,9 @@ assert_eq() {
   fi
 }
 
-./servy http://localhost:54545/echo1 echo 1&
+./servy example.yaml&
 ID1=$!
-curl -X GET http://localhost:54545/echo1
-
-./servy http://localhost:54545/echo2 echo 2&
-ID2=$!
-./servy http://localhost:54545/zero dd if=/dev/zero bs=1000 count=1000&
-ID3=$!
-./servy http://localhost:54545/sha1sum sha1sum&
-ID4=$!
-./servy http://localhost:54545/len sh -c "echo \$request_length"&
-ID5=$!
-
-until curl -X GET http://localhost:54545/echo2
+until curl -X GET http://localhost:8890/echo2
 do
   echo "Try again"
 done
@@ -60,8 +49,3 @@ assert_eq $B 1 "CMP"
 assert_eq $E 5 "CMP"
 
 kill $ID1
-#sleep 0.5
-#curl -X GET http://localhost:54545/echo2
-
-kill $ID2 $ID3 $ID4 $ID5
-echo $E
