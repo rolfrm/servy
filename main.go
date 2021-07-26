@@ -21,6 +21,7 @@ type Endpoint struct {
 	Call         string
 	Arguments    []string
 	ResponseType string `yaml:"response-type"`
+	ContentEncoding string `yaml:"content-encoding"`
 	Variables    map[string]string
 }
 
@@ -31,11 +32,16 @@ type Configuration struct {
 }
 
 func printConfiguration(conf Configuration) {
-	log.Printf("Configuration: %v Endpoints", len(conf.Endpoints))
+	log.Printf("Configuration:\n")
+	log.Printf(" Host: %v\n", conf.Host);
+	log.Printf(" Endpoints: %v\n", len(conf.Endpoints));
 	for k, e := range conf.Endpoints {
 		log.Printf("  %s: %s\n", k, e.Call)
 		if e.ResponseType != "" {
 			log.Printf("     Response Type: %s\n", e.ResponseType)
+		}
+		if e.ContentEncoding != "" {
+			log.Printf("     Content Encoding: %s\n", e.ContentEncoding)
 		}
 		if len(e.Variables) > 0 {
 			log.Printf("     Variables:\n")
@@ -79,9 +85,6 @@ func generic_handle_request(url *url.URL, config *Configuration, reader io.Reade
 		return fmt.Errorf("Failed call %s\n", url.String())
 	}
 	log.Printf("Opened %s :%+v  - %s\n", url.String(), args2, args2.Call)
-	for i,v := range args2.Arguments {
-		log.Printf("Arg %v: '%s'\n", i, v);
-	}
 	
 	args := args2.Arguments
 	var cmd = exec.Command(args[0], args[1:]...)
@@ -143,10 +146,10 @@ func generic_handle_request(url *url.URL, config *Configuration, reader io.Reade
 	io.Copy(writer, stdout)
 	cmd.Wait()
 	if e != nil {
-		log.Printf("Request complete  error: {}", e)
+		log.Printf("Request complete  error: {}\n", e)
 	} else {
 
-		log.Printf("closing.")
+		log.Printf("closing.\n")
 	}
 	return nil
 }
@@ -175,10 +178,15 @@ func handle_http_request(w http.ResponseWriter, req *http.Request, config *Confi
 		io.WriteString(w, "Not found")
 		return
 	}
-
-	if ok && args2.ResponseType != "" {
-		w.Header().Add("Content-Type", args2.ResponseType)
+	if ok {
+		if args2.ResponseType != "" {
+			w.Header().Add("Content-Type", args2.ResponseType)
+		}
+		if args2.ContentEncoding != "" {
+			w.Header().Add("Content-Encoding", args2.ContentEncoding)
+		}
 	}
+	
 	err := generic_handle_request(url, config, stdinData, stdOutData,
 		[]string{
 			fmt.Sprintf("request_length=%v", req.ContentLength),
