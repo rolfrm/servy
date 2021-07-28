@@ -217,6 +217,32 @@ func splitCall(call string) []string {
 	return m
 }
 
+func mergeConfigFiles(a, b Configuration) Configuration {
+	c := Configuration{
+		Endpoints: make(map[string]Endpoint),
+		Variables: make(map[string]string),
+		Host: a.Host,
+	}
+	if c.Host == "" {
+		c.Host = b.Host
+	}
+
+	for k,v := range a.Endpoints {
+		c.Endpoints[k] = v
+	}
+	for k,v := range b.Endpoints {
+		c.Endpoints[k] = v
+	}
+	for k,v := range a.Variables {
+		c.Variables[k] = v
+	}
+	for k,v := range b.Variables {
+		c.Variables[k] = v
+	}
+	
+	return c;
+}
+
 func readConfigFile(path string) Configuration {
 	var x Configuration
 	dat, err := os.Open(path)
@@ -230,7 +256,7 @@ func readConfigFile(path string) Configuration {
 		log.Printf("%v\n", err)
 		return x
 	}
-
+	
 	for i, ep := range x.Endpoints {
 		callargs, err := shellquote.Split(ep.Call);
 		if err != nil {
@@ -238,7 +264,15 @@ func readConfigFile(path string) Configuration {
 		}
 		ep.Arguments = callargs;
 		
-		ep.Path = i
+		ep.Path = i;
+		if ep.Variables == nil {
+			ep.Variables = make(map[string]string);
+		}
+		for k,v := range x.Variables {
+			ep.Variables[k] = v 
+		}
+
+		
 		x.Endpoints[i] = ep
 		if i[0] != '/' {
 			x.Endpoints[fmt.Sprintf("/%s", i)] = ep
@@ -250,9 +284,13 @@ func readConfigFile(path string) Configuration {
 func main() {
 	
 	args := os.Args[1:]
-	if len(args) == 1 {
+	if len(args) >= 1 {
 		var path = args[0]
 		x := readConfigFile(path)
+		for i := 1; i < len(args); i++{
+			x2 := readConfigFile(args[i])
+			x = mergeConfigFiles(x, x2)
+		}
 		printConfiguration(x)
 
 		for k,v := range x.Variables {
