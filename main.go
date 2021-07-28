@@ -94,7 +94,7 @@ func generic_handle_request(url *url.URL, config *Configuration, reader io.Reade
 	for _, v := range q {
 		tlen = tlen + len(v)
 	}
-	env2 := make([]string, tlen+len(args2.Variables))
+	env2 := make([]string, tlen+len(args2.Variables)+len(config.Variables))
 	j := 0
 	for k, v := range q {
 		for i := 0; i < len(v); i++ {
@@ -103,6 +103,10 @@ func generic_handle_request(url *url.URL, config *Configuration, reader io.Reade
 		}
 	}
 	for k, v := range args2.Variables {
+		env2[j] = fmt.Sprintf("%s=%s", k, v)
+		j += 1
+	}
+	for k, v := range config.Variables {
 		env2[j] = fmt.Sprintf("%s=%s", k, v)
 		j += 1
 	}
@@ -281,23 +285,28 @@ func readConfigFile(path string) Configuration {
 	return x
 }
 
+func readConfigFiles(paths[] string) Configuration {
+	x := readConfigFile(paths[0])
+	for i := 1; i < len(paths); i++{
+		x2 := readConfigFile(paths[i])
+		x = mergeConfigFiles(x, x2)
+	}
+	return x
+}
 func main() {
 	
 	args := os.Args[1:]
 	if len(args) >= 1 {
 		var path = args[0]
-		x := readConfigFile(path)
-		for i := 1; i < len(args); i++{
-			x2 := readConfigFile(args[i])
-			x = mergeConfigFiles(x, x2)
-		}
+		x := readConfigFiles(args)
+		
 		printConfiguration(x)
 
 		for k,v := range x.Variables {
 			os.Setenv(k, v);
 		}
 		
-		s1, err := os.Stat(path)
+		s1, err := os.Stat(args[0])
 		if err != nil {
 			return
 		}
@@ -318,7 +327,8 @@ func main() {
 				}
 				s1 = s2
 				log.Printf("Reloading file\n")
-				x = readConfigFile(path)
+				x = readConfigFiles(args)
+				
 			}
 		}()
 		srv := &http.Server{Addr: x.Host}
