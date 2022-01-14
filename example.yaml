@@ -1,0 +1,24 @@
+#!servy
+endpoints:
+  index.html:
+    call: echo "<html><body><h1>Hello World</h1></body></html>"
+  date:
+    # try accessing http://localhost:8888/date?TZ=America/New_York
+    call: bash -c "echo \"<h1> `date` </h1>\""
+  echo:
+    call: sh -c "echo \$ARG"
+  echo_quotes:
+    call: sh -c "echo \"\""
+  echo1:
+    call: echo 1
+  echo2:
+    call: echo 2
+  zero:
+    call: dd if=/dev/zero bs=1000 count=1000
+  sha1sum:
+    call: sha1sum
+  len:
+    call: sh -c "echo \$request_length"
+variables:
+  C: 10
+host: localhost:8890
