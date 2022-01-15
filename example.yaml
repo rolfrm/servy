@@ -27,4 +27,4 @@ endpoints:
     call: sh -c "echo \$request_length"
 variables:
   C: 10
-host: localhost:8890
+host: localhost:8890 http://localhost:8891

@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/kballard/go-shellquote"
@@ -379,17 +381,39 @@ func main() {
 
 			}
 		}()
-		srv := &http.Server{Addr: x.Host}
-		err = srv.ListenAndServe()
 
-		if x.CertPem != "" {
-			log.Printf("Starting with TLS enabled")
-			srv.ListenAndServeTLS(x.CertPem, x.KeyPem)
-		} else {
-			srv.ListenAndServe()
+		hosts := strings.Split(x.Host, " ")
+		var wg sync.WaitGroup
+
+		for _, k := range hosts {
+			if strings.TrimSpace(k) == "" {
+				continue
+			}
+
+			url, e := url.Parse(k)
+			if e != nil {
+				log.Fatal(e)
+			}
+			log.Printf("Starting %v %s\n", url, url.Scheme)
+			srv := &http.Server{Addr: url.Host}
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if url.Scheme == "https" {
+					if x.CertPem == "" {
+						log.Fatal("No certificate file defined")
+					}
+					log.Printf("Starting with TLS enabled")
+					err = srv.ListenAndServeTLS(x.CertPem, x.KeyPem)
+				} else {
+					err = srv.ListenAndServe()
+				}
+				if err != nil {
+					log.Printf("startListenAndServe Error: %v\n", err.Error())
+				}
+			}()
 		}
-		if err != nil {
-			log.Printf("startListenAndServe Error: %v\n", err.Error())
-		}
+		wg.Wait()
+
 	}
 }
