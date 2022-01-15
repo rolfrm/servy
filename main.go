@@ -90,9 +90,8 @@ func generic_handle_request(url *url.URL, config *Configuration, reader io.Reade
 	for _, v := range config.Endpoints {
 
 		regex := v.regex
-		ok2 := regex.MatchString(url.Path)
-		if ok2 {
-			ok = ok2
+		ok = regex.MatchString(url.Path)
+		if ok {
 			args2 = v
 			break
 		}
@@ -102,7 +101,6 @@ func generic_handle_request(url *url.URL, config *Configuration, reader io.Reade
 		return fmt.Errorf("Failed call %s\n", url.String())
 	}
 	log.Printf("Opened %s :%+v  - %s\n", url.String(), args2, args2.Call)
-
 	args := args2.Arguments
 	var cmd = exec.Command(args[0], args[1:]...)
 	q := url.Query()
@@ -280,6 +278,7 @@ func readConfigFile(path string) Configuration {
 
 	var x Configuration
 	dat, err := os.Open(path)
+	defer dat.Close()
 	if err != nil {
 		log.Printf("%v\n", err)
 		return x
@@ -290,7 +289,7 @@ func readConfigFile(path string) Configuration {
 		log.Printf("%v\n", err)
 		return x
 	}
-	dat.Close()
+
 	{
 		ep := make([]Endpoint, len(x.Endpoints2.Content)/2)
 		for i, e := range x.Endpoints2.Content {
