@@ -1,5 +1,8 @@
 #!servy
 endpoints:
+  /:
+    call: echo "<html><body><h1>Hello World</h1></body></html>"
+  
   index.html:
     call: echo "<html><body><h1>Hello World</h1></body></html>"
   .*.html: # regex match any other html than index.html. $URL is the request path
