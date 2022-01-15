@@ -2,6 +2,8 @@
 endpoints:
   index.html:
     call: echo "<html><body><h1>Hello World</h1></body></html>"
+  .*.html: # regex match any other html than index.html. $URL is the request path
+    call: bash -c "echo \"<html><body><h1>Unknown endpoint $URL </h1></body></html>\""
   date:
     # try accessing http://localhost:8888/date?TZ=America/New_York
     call: bash -c "echo \"<h1> `date` </h1>\""
@@ -17,6 +19,7 @@ endpoints:
     call: dd if=/dev/zero bs=1000 count=1000
   sha1sum:
     call: sha1sum
+    response-type: binary
   len:
     call: sh -c "echo \$request_length"
 variables:

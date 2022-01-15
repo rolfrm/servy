@@ -3,8 +3,6 @@ package main
 import (
 	"encoding/gob"
 	"fmt"
-	"golang.org/x/net/websocket"
-	"gopkg.in/yaml.v3"
 	"io"
 	"io/ioutil"
 	"log"
@@ -12,31 +10,39 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"time"
+
 	"github.com/kballard/go-shellquote"
+	"golang.org/x/net/websocket"
+	"gopkg.in/yaml.v3"
 )
 
 type Endpoint struct {
-	Path         string
-	Call         string
-	Arguments    []string
-	ResponseType string `yaml:"response-type"`
+	Path            string
+	Call            string
+	Arguments       []string
+	ResponseType    string `yaml:"response-type"`
 	ContentEncoding string `yaml:"content-encoding"`
-	Variables    map[string]string
+	Variables       map[string]string
+	regex           *regexp.Regexp
 }
 
 type Configuration struct {
-	Endpoints map[string]Endpoint `yaml:"endpoints,flow"`
-	Variables map[string]string
-	Host      string
+	Endpoints2 yaml.Node  `yaml:"endpoints"`
+	Endpoints  []Endpoint `yaml:"__endpoints,flow"`
+	Variables  map[string]string
+	Host       string
+	CertPem    string
+	KeyPem     string
 }
 
 func printConfiguration(conf Configuration) {
 	log.Printf("Configuration:\n")
-	log.Printf(" Host: %v\n", conf.Host);
-	log.Printf(" Endpoints: %v\n", len(conf.Endpoints));
-	for k, e := range conf.Endpoints {
-		log.Printf("  %s: %s\n", k, e.Call)
+	log.Printf(" Host: %v\n", conf.Host)
+	log.Printf(" Endpoints: %v\n", len(conf.Endpoints))
+	for _, e := range conf.Endpoints {
+		log.Printf("  %s: %s\n", e.Path, e.Call)
 		if e.ResponseType != "" {
 			log.Printf("     Response Type: %s\n", e.ResponseType)
 		}
@@ -78,14 +84,25 @@ func generic_handle_request(url *url.URL, config *Configuration, reader io.Reade
 	if writer == nil {
 		writer = io.Discard
 	}
-	path := url.Path
 
-	args2, ok := config.Endpoints[path]
+	ok := false
+	var args2 Endpoint
+	for _, v := range config.Endpoints {
+
+		regex := v.regex
+		ok2 := regex.MatchString(url.Path)
+		if ok2 {
+			ok = ok2
+			args2 = v
+			break
+		}
+	}
+
 	if !ok {
 		return fmt.Errorf("Failed call %s\n", url.String())
 	}
 	log.Printf("Opened %s :%+v  - %s\n", url.String(), args2, args2.Call)
-	
+
 	args := args2.Arguments
 	var cmd = exec.Command(args[0], args[1:]...)
 	q := url.Query()
@@ -94,7 +111,7 @@ func generic_handle_request(url *url.URL, config *Configuration, reader io.Reade
 	for _, v := range q {
 		tlen = tlen + len(v)
 	}
-	env2 := make([]string, tlen+len(args2.Variables)+len(config.Variables))
+	env2 := make([]string, tlen+len(args2.Variables)+len(config.Variables)+1)
 	j := 0
 	for k, v := range q {
 		for i := 0; i < len(v); i++ {
@@ -110,6 +127,7 @@ func generic_handle_request(url *url.URL, config *Configuration, reader io.Reade
 		env2[j] = fmt.Sprintf("%s=%s", k, v)
 		j += 1
 	}
+	env2[j] = fmt.Sprintf("URL=%s", url.Path)
 	cmd.Env = append(append(env2, extraArgs...), cmd.Env...)
 
 	stdout, err := cmd.StdoutPipe()
@@ -175,7 +193,16 @@ func handle_http_request(w http.ResponseWriter, req *http.Request, config *Confi
 	if req.Method == http.MethodPut {
 		stdOutData = nil
 	}
-	args2, ok := config.Endpoints[url.Path]
+	ok := false
+	var args2 Endpoint
+	for _, v := range config.Endpoints {
+		ok2 := v.regex.MatchString(url.Path)
+		if ok2 {
+			ok = ok2
+			args2 = v
+			break
+		}
+	}
 
 	if !ok {
 		w.WriteHeader(http.StatusNotFound)
@@ -190,7 +217,7 @@ func handle_http_request(w http.ResponseWriter, req *http.Request, config *Confi
 			w.Header().Add("Content-Encoding", args2.ContentEncoding)
 		}
 	}
-	
+
 	err := generic_handle_request(url, config, stdinData, stdOutData,
 		[]string{
 			fmt.Sprintf("request_length=%v", req.ContentLength),
@@ -217,37 +244,40 @@ func make_request_handler(config *Configuration, ws http.Handler) func(http.Resp
 }
 
 func splitCall(call string) []string {
-	m, _:= shellquote.Split(call);	
+	m, _ := shellquote.Split(call)
 	return m
 }
 
 func mergeConfigFiles(a, b Configuration) Configuration {
 	c := Configuration{
-		Endpoints: make(map[string]Endpoint),
+		Endpoints: make([]Endpoint, 0),
 		Variables: make(map[string]string),
-		Host: a.Host,
+		Host:      a.Host,
 	}
 	if c.Host == "" {
 		c.Host = b.Host
 	}
+	if c.CertPem == "" {
+		c.CertPem = b.CertPem
+	}
+	if c.KeyPem == "" {
+		c.KeyPem = b.KeyPem
+	}
 
-	for k,v := range a.Endpoints {
-		c.Endpoints[k] = v
-	}
-	for k,v := range b.Endpoints {
-		c.Endpoints[k] = v
-	}
-	for k,v := range a.Variables {
+	c.Endpoints = append(a.Endpoints, b.Endpoints...)
+
+	for k, v := range a.Variables {
 		c.Variables[k] = v
 	}
-	for k,v := range b.Variables {
+	for k, v := range b.Variables {
 		c.Variables[k] = v
 	}
-	
-	return c;
+
+	return c
 }
 
 func readConfigFile(path string) Configuration {
+
 	var x Configuration
 	dat, err := os.Open(path)
 	if err != nil {
@@ -260,52 +290,71 @@ func readConfigFile(path string) Configuration {
 		log.Printf("%v\n", err)
 		return x
 	}
-	
-	for i, ep := range x.Endpoints {
-		callargs, err := shellquote.Split(ep.Call);
-		if err != nil {
-			log.Printf("warning processing %s: %s", i, err.Error());
+	dat.Close()
+	{
+		ep := make([]Endpoint, len(x.Endpoints2.Content)/2)
+		for i, e := range x.Endpoints2.Content {
+			if i%2 == 0 {
+				ep[i/2].Path = e.Value
+			} else {
+				e2 := Endpoint{}
+				err := e.Decode(&e2)
+				if err == nil {
+					e2.Path = ep[i/2].Path
+					ep[i/2] = e2
+				}
+			}
 		}
-		ep.Arguments = callargs;
-		
-		ep.Path = i;
-		if ep.Variables == nil {
-			ep.Variables = make(map[string]string);
-		}
-		for k,v := range x.Variables {
-			ep.Variables[k] = v 
-		}
+		x.Endpoints = ep
+	}
 
-		
-		x.Endpoints[i] = ep
-		if i[0] != '/' {
-			x.Endpoints[fmt.Sprintf("/%s", i)] = ep
+	for i, ep := range x.Endpoints {
+		callargs, err := shellquote.Split(ep.Call)
+		if err != nil {
+			log.Printf("warning processing %s: %s", i, err.Error())
 		}
+		ep.Arguments = callargs
+		regex, e := regexp.Compile(ep.Path)
+		if e != nil {
+			regex, e = regexp.Compile(regexp.QuoteMeta(ep.Path))
+			if e != nil {
+				log.Fatal(">: %v", e)
+			}
+		}
+		ep.regex = regex
+
+		if ep.Variables == nil {
+			ep.Variables = make(map[string]string)
+		}
+		for k, v := range x.Variables {
+			ep.Variables[k] = v
+		}
+		x.Endpoints[i] = ep
 	}
 	return x
 }
 
-func readConfigFiles(paths[] string) Configuration {
+func readConfigFiles(paths []string) Configuration {
 	x := readConfigFile(paths[0])
-	for i := 1; i < len(paths); i++{
+	for i := 1; i < len(paths); i++ {
 		x2 := readConfigFile(paths[i])
 		x = mergeConfigFiles(x, x2)
 	}
 	return x
 }
 func main() {
-	
+
 	args := os.Args[1:]
 	if len(args) >= 1 {
 		var path = args[0]
 		x := readConfigFiles(args)
-		
+
 		printConfiguration(x)
 
-		for k,v := range x.Variables {
-			os.Setenv(k, v);
+		for k, v := range x.Variables {
+			os.Setenv(k, v)
 		}
-		
+
 		s1, err := os.Stat(args[0])
 		if err != nil {
 			return
@@ -319,7 +368,7 @@ func main() {
 				time.Sleep(200 * time.Millisecond)
 				s2, _ := os.Stat(path)
 				if s2 == nil {
-					continue;
+					continue
 				}
 
 				if s2.Size() == s1.Size() && s2.ModTime() == s1.ModTime() {
@@ -328,17 +377,15 @@ func main() {
 				s1 = s2
 				log.Printf("Reloading file\n")
 				x = readConfigFiles(args)
-				
+
 			}
 		}()
 		srv := &http.Server{Addr: x.Host}
 		err = srv.ListenAndServe()
-		certPem := os.Getenv("SERVY_CERT_FILE")
-		keyPem := os.Getenv("SERVY_KEY_FILE")
 
-		if certPem != "" {
+		if x.CertPem != "" {
 			log.Printf("Starting with TLS enabled")
-			srv.ListenAndServeTLS(certPem, keyPem)
+			srv.ListenAndServeTLS(x.CertPem, x.KeyPem)
 		} else {
 			srv.ListenAndServe()
 		}
