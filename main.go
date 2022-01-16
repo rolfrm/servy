@@ -94,6 +94,25 @@ func generic_handle_request(url *url.URL, config *Configuration, reader io.Reade
 		regex := v.regex
 		ok = regex.MatchString(url.Path)
 		if ok {
+
+			matches := regex.FindStringSubmatch(url.Path)
+			if len(matches) > 1 {
+				subnames := regex.SubexpNames()
+				tmp := make([]string, len(matches)-1)
+				for i, v := range subnames {
+					if i == 0 {
+						continue
+					}
+					name := subnames[i]
+					if name == "" {
+						tmp[i-1] = fmt.Sprintf("ARG%v=%s", i, matches[i])
+					} else {
+						tmp[i-1] = fmt.Sprintf("%v=%s", v, matches[i])
+					}
+				}
+				extraArgs = append(extraArgs, tmp...)
+			}
+
 			args2 = v
 			break
 		}

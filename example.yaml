@@ -1,12 +1,16 @@
 #!servy
 endpoints:
-  /:
+
+
+  /$:
     call: echo "<html><body><h1>Hello World</h1></body></html>"
   
   index.html:
     call: echo "<html><body><h1>Hello World</h1></body></html>"
-  .*.html: # regex match any other html than index.html. $URL is the request path
-    call: bash -c "echo \"<html><body><h1>Unknown endpoint $URL </h1></body></html>\""
+  "/(?P<a>.*)/(.*).html": # regex match any other html than index.html. $URL is the request path
+    call: bash -c "echo \"<html><body><h1>Unknown endpoint $URL   ($a) </h1></body></html>\""
+  "/(.*).html": # regex match any other html than index.html. $URL is the request path
+    call: bash -c "echo \"<html><body><h1>Unknown endpoint $URL   ($ARG1) </h1></body></html>\""
   date:
     # try accessing http://localhost:8888/date?TZ=America/New_York
     call: bash -c "echo \"<h1> `date` </h1>\""
@@ -27,4 +31,5 @@ endpoints:
     call: sh -c "echo \$request_length"
 variables:
   C: 10
-host: localhost:8890 http://localhost:8891
+host: http://localhost:8890 http://localhost:8891
+  `
