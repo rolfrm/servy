@@ -23,6 +23,7 @@ import (
 type Endpoint struct {
 	Path            string
 	Call            string
+	File            string
 	Arguments       []string
 	ResponseType    string `yaml:"response-type"`
 	ContentEncoding string `yaml:"content-encoding"`
@@ -58,9 +59,11 @@ func printConfiguration(conf Configuration) {
 			}
 		}
 	}
+
 	log.Printf("Global Variables:\n")
 	for key, value := range conf.Variables {
 		log.Printf("   %s = %s\n", key, value)
+
 	}
 }
 
@@ -121,6 +124,7 @@ func generic_handle_request(url *url.URL, config *Configuration, reader io.Reade
 	if !ok {
 		return fmt.Errorf("Failed call %s\n", url.String())
 	}
+
 	log.Printf("Opened %s :%+v  - %s\n", url.String(), args2, args2.Call)
 	args := args2.Arguments
 	var cmd = exec.Command(args[0], args[1:]...)
@@ -229,12 +233,22 @@ func handle_http_request(w http.ResponseWriter, req *http.Request, config *Confi
 		return
 	}
 	if ok {
+		if args2.File != "" {
+			file := args2.File
+			if strings.Trim(file, " ") == "$(URL)" {
+				file = strings.Trim(req.RequestURI, "/")
+			}
+
+			http.ServeFile(w, req, file)
+			return
+		}
 		if args2.ResponseType != "" {
 			w.Header().Add("Content-Type", args2.ResponseType)
 		}
 		if args2.ContentEncoding != "" {
 			w.Header().Add("Content-Encoding", args2.ContentEncoding)
 		}
+
 	}
 
 	err := generic_handle_request(url, config, stdinData, stdOutData,
@@ -383,6 +397,7 @@ func main() {
 			handle_ws_request(conn, &x)
 		})
 		http.HandleFunc("/", make_request_handler(&x, ws))
+
 		go func() {
 			for true {
 				time.Sleep(200 * time.Millisecond)
